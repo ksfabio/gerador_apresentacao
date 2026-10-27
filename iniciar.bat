@@ -1,7 +1,8 @@
 @echo off
 chcp 65001 >nul
 title Report Semanal
-cd /d "%~dp0"
+rem pushd funciona tambem quando a pasta esta na rede (\\servidor\pasta)
+pushd "%~dp0"
 
 rem ---- localizar o Python (prefere o launcher "py") ----
 set "PY="
@@ -14,31 +15,36 @@ if not defined PY goto sem_python
 if errorlevel 1 goto sem_python
 
 rem ---- openpyxl e opcional: sem ele o historico vai para CSV ----
+rem      a tentativa de instalacao e registrada por usuario, nesta maquina
+set "MARCA=%LOCALAPPDATA%\ReportSemanal\openpyxl_tentado"
 %PY% -c "import openpyxl" >nul 2>nul
 if not errorlevel 1 goto iniciar
-if exist "dados\.openpyxl_tentado" goto iniciar
+if exist "%MARCA%" goto iniciar
 echo.
 echo  Instalando a biblioteca openpyxl, usada para gravar o historico em Excel...
 echo  Se a rede da empresa bloquear, o aplicativo funciona igual e grava o historico em CSV.
 echo.
 %PY% -m pip install --user openpyxl
-if not exist "dados" mkdir "dados"
-echo tentado> "dados\.openpyxl_tentado"
+if not exist "%LOCALAPPDATA%\ReportSemanal" mkdir "%LOCALAPPDATA%\ReportSemanal"
+echo tentado> "%MARCA%"
 
 :iniciar
-%PY% app.py
+%PY% -B app.py
 if errorlevel 1 (
   echo.
   echo  O aplicativo terminou com erro. Veja a mensagem acima.
   pause
 )
+popd
 exit /b
 
 :sem_python
 echo.
 echo  Nao encontrei o Python 3.8 ou superior nesta maquina.
+echo  Cada pessoa que for usar o aplicativo precisa ter o Python instalado.
 echo  Instale pelo Portal da Empresa / Centro de Software, ou peca ao suporte,
 echo  e execute este arquivo novamente.
 echo.
 pause
+popd
 exit /b 1

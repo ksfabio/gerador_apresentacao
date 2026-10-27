@@ -13,6 +13,8 @@ sem ele, o histórico é gravado em CSV (pasta historico_csv).
 O servidor escuta apenas em 127.0.0.1 (só esta máquina acessa).
 """
 import csv
+import getpass
+import uuid
 import datetime as dt
 import json
 import os
@@ -43,7 +45,7 @@ try:
 except ImportError:
     TEM_XLSX = False
 
-VERSAO = "1.0"
+VERSAO = "1.1"
 BASE = Path(__file__).resolve().parent
 WEB = BASE / "web"
 DADOS = BASE / "dados"
@@ -53,7 +55,18 @@ RASCUNHO = DADOS / "rascunho.json"
 EXEMPLO = DADOS / "exemplo.json"
 HIST_XLSX = BASE / "historico.xlsx"
 HIST_CSV = BASE / "historico_csv"
+LOCK = DADOS / "em_uso.json"           # quem está editando agora (uso em pasta compartilhada)
 CONFIG_LOCAL = BASE / "config_local.json"   # opcional: {"navegador": "C:\\...\\msedge.exe", "porta": 8765}
+
+USUARIO = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+try:
+    USUARIO = USUARIO or getpass.getuser()
+except Exception:
+    USUARIO = USUARIO or "desconhecido"
+MAQUINA = socket.gethostname()
+SESSAO = uuid.uuid4().hex
+LOCK_VALIDADE = 120      # segundos sem sinal para considerar a trava abandonada
+LOCK_BATIDA = 30         # de quanto em quanto tempo esta sessão renova a trava
 
 RE_DATA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TIPOS = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -146,6 +159,73 @@ def sprint_da_data(dados, hoje):
     return ""
 
 
+# --------------------------------------------------------------------------- trava de edição
+_trava = threading.Lock()
+
+
+def ler_lock():
+    l = ler_json(LOCK)
+    return l if isinstance(l, dict) else None
+
+
+def lock_ativo(l):
+    return bool(l) and (time.time() - float(l.get("batida", 0))) < LOCK_VALIDADE
+
+
+def sou_dono():
+    l = ler_lock()
+    return bool(l) and l.get("sessao") == SESSAO
+
+
+def pegar_lock(forcar=False):
+    """Tenta assumir a edição. Devolve None se conseguiu, ou os dados de quem está editando."""
+    with _trava:
+        l = ler_lock()
+        if lock_ativo(l) and l.get("sessao") != SESSAO and not forcar:
+            return l
+        agora = time.time()
+        gravar_json(LOCK, {"usuario": USUARIO, "maquina": MAQUINA, "sessao": SESSAO,
+                           "desde": l.get("desde", agora) if l and l.get("sessao") == SESSAO else agora,
+                           "batida": agora})
+        return None
+
+
+def renovar_lock():
+    while True:
+        time.sleep(LOCK_BATIDA)
+        try:
+            with _trava:
+                l = ler_lock()
+                if l and l.get("sessao") == SESSAO:
+                    l["batida"] = time.time()
+                    gravar_json(LOCK, l)
+        except Exception:
+            pass
+
+
+def soltar_lock():
+    try:
+        with _trava:
+            if sou_dono():
+                LOCK.unlink()
+    except Exception:
+        pass
+
+
+def info_lock():
+    l = ler_lock()
+    if not lock_ativo(l) or l.get("sessao") == SESSAO:
+        return None
+    return {"usuario": l.get("usuario"), "maquina": l.get("maquina"),
+            "desde": dt.datetime.fromtimestamp(float(l.get("desde", 0))).strftime("%d/%m %H:%M")}
+
+
+def carimbo(dados):
+    dados["_meta"] = {"usuario": USUARIO, "maquina": MAQUINA,
+                      "quando": dt.datetime.now().strftime("%Y-%m-%d %H:%M")}
+    return dados
+
+
 # --------------------------------------------------------------------------- PDF
 def achar_navegador():
     cfg = config_local().get("navegador") or os.environ.get("REPORT_NAVEGADOR")
@@ -213,7 +293,7 @@ def linhas_historico():
                         "% semana anterior", "Status", "Status manual?", "Marco?"]],
         "Bloqueios": [["Semana", "Sprint", "Frente", "Bloqueio / dependência", "Área", "Desde",
                        "Dias em aberto", "Impacto", "Pedido / ação", "Criticidade"]],
-        "Semana": [["Semana", "Sprint", "Destaques", "Próximos passos"]],
+        "Semana": [["Semana", "Sprint", "Destaques", "Próximos passos", "Gerado por", "Gerado em"]],
         "Comunicações": [["Semana", "Ordem", "Incluída?", "Título", "Subtítulo", "Posição", "Texto", "Tem imagem?"]],
         "Frentes": [["Sigla", "Nome", "Responsável", "Objetivo"]],
         "Sprints": [["Trimestre", "Nº", "Início", "Fim"]],
@@ -249,7 +329,9 @@ def linhas_historico():
                                      b.get("area"), desde, (hoje - desde).days if desde else None,
                                      b.get("impacto"), b.get("pedido"), b.get("criticidade")])
         sem = dados.get("semana") or {}
-        tab["Semana"].append([hoje, sp, sem.get("destaques", ""), sem.get("proximos", "")])
+        meta = dados.get("_meta") or {}
+        tab["Semana"].append([hoje, sp, sem.get("destaques", ""), sem.get("proximos", ""),
+                              meta.get("usuario", ""), meta.get("quando", "")])
         for i, c in enumerate(dados.get("comunicacoes") or [], 1):
             tab["Comunicações"].append([hoje, i, "Sim" if c.get("incluir") else "Não", c.get("titulo"),
                                         c.get("subtitulo"), c.get("posicao"), c.get("texto"),
@@ -331,8 +413,12 @@ def estado():
             dados, origem = ler_json(SEMANAS / f"{sem[0]['data']}.json"), "semana " + sem[0]["data"]
     if not dados:
         dados, origem = ler_json(EXEMPLO, {}), "exemplo"
+    if not sou_dono():
+        pegar_lock()          # se a trava estiver livre (ou abandonada), esta sessão assume
     return {"dados": dados, "origem": origem, "semanas": lista_semanas(), "xlsx": TEM_XLSX,
-            "navegador": achar_navegador(), "pasta": str(BASE), "versao": VERSAO}
+            "navegador": achar_navegador(), "pasta": str(BASE), "versao": VERSAO,
+            "usuario": USUARIO, "modo": "edicao" if sou_dono() else "leitura", "lock": info_lock(),
+            "meta": (dados or {}).get("_meta")}
 
 
 def gerar(payload):
@@ -343,6 +429,7 @@ def gerar(payload):
     if not RE_DATA.match(data):
         raise ValueError("Data de referência inválida.")
     avisos = []
+    carimbo(dados)
     gravar_json(SEMANAS / f"{data}.json", dados)
     gravar_json(RASCUNHO, dados)
     pasta = SAIDA / data[:4] / data
@@ -358,7 +445,7 @@ def gerar(payload):
         avisos.append(aviso_hist)
     return {"ok": True, "data": data, "pasta": str(pasta), "html": str(html_path),
             "pdf": None if erro_pdf else str(pdf_path), "historico": hist, "avisos": avisos,
-            "semanas": lista_semanas()}
+            "semanas": lista_semanas(), "meta": dados["_meta"]}
 
 
 def caminho_para_abrir(alvo, data):
@@ -426,10 +513,18 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         try:
             corpo = self._corpo()
+            if u.path in ("/api/salvar", "/api/gerar") and not sou_dono():
+                quem = info_lock() or {}
+                return self._resposta(423, {"erro": f"{quem.get('usuario', 'Outra pessoa')} está editando a apresentação agora. "
+                                                    "Suas alterações não foram salvas.", "lock": quem})
+            if u.path == "/api/assumir":
+                pegar_lock(forcar=bool(corpo.get("forcar")))
+                e = estado()
+                return self._resposta(200, e)
             if u.path == "/api/salvar":
                 if not isinstance(corpo.get("dados"), dict):
                     raise ValueError("Dados inválidos.")
-                gravar_json(RASCUNHO, corpo["dados"])
+                gravar_json(RASCUNHO, carimbo(corpo["dados"]))
                 return self._resposta(200, {"ok": True, "hora": dt.datetime.now().strftime("%H:%M")})
             if u.path == "/api/gerar":
                 print(f"  Gerando apresentação de {corpo.get('dados', {}).get('config', {}).get('dataReferencia')}...")
@@ -443,6 +538,7 @@ class Handler(BaseHTTPRequestHandler):
                 abrir_no_sistema(alvo)
                 return self._resposta(200, {"ok": True})
             if u.path == "/api/encerrar":
+                soltar_lock()
                 self._resposta(200, {"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -478,8 +574,13 @@ def main():
     print(f"  Pasta:     {BASE}")
     print(f"  Histórico: {'Excel (historico.xlsx)' if TEM_XLSX else 'CSV (openpyxl não instalado)'}")
     print(f"  PDF:       {nav or 'navegador não encontrado - PDF desativado'}")
+    print(f"  Usuário:   {USUARIO} @ {MAQUINA}")
     print("  Para encerrar: botão 'Encerrar' na interface, ou feche esta janela.")
     print("=" * 64)
+    quem = pegar_lock()
+    if quem:
+        print(f"  ATENÇÃO: {quem.get('usuario')} ({quem.get('maquina')}) está editando agora. Abrindo em modo leitura.")
+    threading.Thread(target=renovar_lock, daemon=True).start()
     if "--sem-navegador" not in sys.argv:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
@@ -487,6 +588,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        soltar_lock()
         srv.server_close()
         print("  Encerrado.")
 

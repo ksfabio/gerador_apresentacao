@@ -8,7 +8,10 @@
   :root{--bg:#f4f3f0;--panel:#fff;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8983;--line:#e4e2dc;--line-2:#d3d1ca;--accent:#1f4e8c;--accent-2:#2a78d6;--tint:#eef4fc;--good:#0ca30c;--critical:#d03b3b}
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:14px}
-  .app{display:grid;grid-template-rows:56px 1fr;height:100vh}
+  .app{display:grid;grid-template-rows:56px auto 1fr;height:100vh}
+  #banner{display:none;align-items:center;gap:12px;padding:9px 18px;background:#fff4d6;border-bottom:1px solid #f0d58a;font-size:13.5px;color:#5c4400}
+  #banner.on{display:flex}
+  #banner .sp{flex:1}
   header{display:flex;align-items:center;gap:14px;padding:0 18px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .nome{font-weight:650;font-size:16px}
   header .nome small{display:block;font-weight:400;font-size:11.5px;color:var(--ink-3)}
@@ -105,6 +108,7 @@
     <button id="btSalvar">Salvar</button>
     <button class="pri" id="btGerar">Gerar apresentação</button>
   </header>
+  <div id="banner"></div>
   <main id="main">
     <nav id="nav"></nav>
     <section id="editor"></section>

@@ -11,15 +11,15 @@ async function api(caminho, corpo){
     r = await fetch(caminho, corpo === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
   } catch(e){ throw new Error("o aplicativo não está rodando. Execute o iniciar.bat novamente."); }
   const j = await r.json().catch(() => ({ erro: "resposta inválida do servidor" }));
-  if (!r.ok) throw new Error(j.erro || ("erro " + r.status));
+  if (!r.ok){ const e = new Error(j.erro || ("erro " + r.status)); e.status = r.status; e.lock = j.lock; throw e; }
   return j;
 }
-let tSalvar, sujo = false;
+let tSalvar, sujo = false, leitura = false;
 function agendarSalvar(){ sujo = true; $("#salvo").textContent = "alterações não salvas…"; clearTimeout(tSalvar); tSalvar = setTimeout(salvar, 1500); }
 async function salvar(){
   clearTimeout(tSalvar);
   try { const r = await api("/api/salvar", { dados: D }); sujo = false; $("#salvo").textContent = "rascunho salvo às " + r.hora; return true; }
-  catch(e){ $("#salvo").textContent = "NÃO SALVO: " + e.message; return false; }
+  catch(e){ if (e.status === 423){ entrarLeitura(e.lock); return false; } $("#salvo").textContent = "NÃO SALVO: " + e.message; return false; }
 }
 window.addEventListener("beforeunload", e => { if (sujo){ e.preventDefault(); e.returnValue = ""; } });
 function fecharModal(){ $("#modalBg").style.display = "none"; }
@@ -44,7 +44,7 @@ function toast(msg, ms=3800){ const t = $("#toast"); t.innerHTML = msg; t.style.
 let tPrev;
 function atualizar(inicial){
   clearTimeout(tPrev);
-  if (!inicial && D) agendarSalvar();
+  if (!inicial && D){ if (leitura) $("#salvo").textContent = "modo leitura: alterações não são salvas"; else agendarSalvar(); }
   tPrev = setTimeout(() => {
     const fr = $("#frame");
     let y = 0; try { y = fr.contentWindow.scrollY; } catch(e){}
@@ -460,12 +460,49 @@ $("#btGerar").onclick = async () => {
     $("#mPasta").onclick = () => abrirArquivo("pasta", r.data);
     if ($("#mPdf")) $("#mPdf").onclick = () => abrirArquivo("pdf", r.data);
     if ($("#mHtml")) $("#mHtml").onclick = () => abrirArquivo("html", r.data);
-  } catch(e){ toast("Erro ao gerar: " + esc(e.message), 9000); }
+  } catch(e){ if (e.status === 423) entrarLeitura(e.lock); toast("Erro ao gerar: " + esc(e.message), 9000); }
   finally { b.disabled = false; b.textContent = "Gerar apresentação"; }
 };
+/* ---------- uso compartilhado: só uma pessoa edita por vez ---------- */
+function entrarLeitura(lock){
+  leitura = true; sujo = false; clearTimeout(tSalvar);
+  if (lock) ESTADO.lock = lock;
+  ESTADO.modo = "leitura";
+  aplicarModo();
+}
+function aplicarModo(){
+  leitura = ESTADO.modo === "leitura";
+  ["#btGerar", "#btNova", "#btSalvar"].forEach(s => $(s).disabled = leitura);
+  const b = $("#banner");
+  if (!leitura){ b.classList.remove("on"); return; }
+  const l = ESTADO.lock || {};
+  b.innerHTML = `<span>🔒 <b>${esc(l.usuario || "Outra pessoa")}</b>${l.maquina ? " (" + esc(l.maquina) + ")" : ""} está editando a apresentação${l.desde ? " desde " + esc(l.desde) : ""}. Você está em <b>modo leitura</b>: pode navegar e ver a prévia, mas nada é salvo.</span><span class="sp"></span>
+    <button id="bnTentar">Verificar de novo</button><button id="bnAssumir">Assumir edição</button>`;
+  b.classList.add("on");
+  $("#bnTentar").onclick = () => recarregar(false);
+  $("#bnAssumir").onclick = async () => {
+    if (!await confirmar("Assumir a edição?", `Use só se tiver certeza de que <b>${esc(l.usuario || "a outra pessoa")}</b> não está mais editando (por exemplo, fechou o aplicativo sem encerrar). Se ela ainda estiver editando, o que ela salvar depois disso será recusado.`, "Assumir edição")) return;
+    recarregar(true);
+  };
+}
+async function recarregar(forcar){
+  try {
+    ESTADO = forcar ? await api("/api/assumir", { forcar: true }) : await api("/api/estado");
+    if (ESTADO.modo === "edicao"){
+      leitura = false; D = ESTADO.dados; normalizar(); abrir(secAtual); atualizar(true); mostrarMeta();
+      toast("Edição liberada. Os dados foram recarregados com a última versão salva.", 6000);
+    } else toast("Ainda em edição por " + esc((ESTADO.lock || {}).usuario || "outra pessoa") + ".");
+    aplicarModo();
+  } catch(e){ toast("Erro: " + esc(e.message)); }
+}
+function mostrarMeta(){
+  const m = ESTADO.meta;
+  $("#salvo").textContent = m && m.usuario ? `última alteração: ${m.usuario}, ${fmtBR(m.quando.slice(0, 10))} ${m.quando.slice(11)}` :
+    ESTADO.origem === "exemplo" ? "dados de exemplo" : "carregado";
+}
 async function encerrar(){
-  if (!await confirmar("Encerrar o aplicativo?", "O rascunho é salvo antes. Para voltar depois, execute o iniciar.bat.", "Salvar e encerrar")) return;
-  await salvar();
+  if (!await confirmar("Encerrar o aplicativo?", leitura ? "Você está em modo leitura; nada será salvo." : "O rascunho é salvo antes e a edição fica liberada para outras pessoas. Para voltar depois, execute o iniciar.bat.", leitura ? "Encerrar" : "Salvar e encerrar")) return;
+  if (!leitura) await salvar();
   try { await api("/api/encerrar", {}); } catch(e){}
   sujo = false;
   document.body.innerHTML = `<div style="padding:60px;font-family:Segoe UI,sans-serif"><h2>Aplicativo encerrado</h2><p>O rascunho foi salvo. Pode fechar esta aba.</p></div>`;
@@ -488,7 +525,7 @@ async function iniciar(){
   catch(e){ document.body.innerHTML = `<div style="padding:60px;font-family:Segoe UI,sans-serif"><h2>Não foi possível conectar</h2><p>${esc(e.message)}</p></div>`; return; }
   D = ESTADO.dados; normalizar();
   montarNav(); abrir("atividades"); atualizar(true);
-  $("#salvo").textContent = ESTADO.origem === "rascunho" ? "rascunho carregado" : ESTADO.origem === "exemplo" ? "dados de exemplo" : "carregado da " + ESTADO.origem;
+  mostrarMeta(); aplicarModo();
   const avisos = [];
   if (ESTADO.origem === "exemplo") avisos.push("Dados de exemplo carregados. Troque pelas suas frentes e atividades: tudo é salvo automaticamente.");
   if (!ESTADO.navegador) avisos.push("Edge/Chrome não encontrado: o PDF não será gerado automaticamente.");
