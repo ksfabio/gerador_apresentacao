@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Semanal – Editor</title>
+<style>
+  :root{--bg:#f4f3f0;--panel:#fff;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8983;--line:#e4e2dc;--line-2:#d3d1ca;--accent:#1f4e8c;--accent-2:#2a78d6;--tint:#eef4fc;--good:#0ca30c;--critical:#d03b3b}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:14px}
+  .app{display:grid;grid-template-rows:56px 1fr;height:100vh}
+  header{display:flex;align-items:center;gap:14px;padding:0 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .nome{font-weight:650;font-size:16px}
+  header .nome small{display:block;font-weight:400;font-size:11.5px;color:var(--ink-3)}
+  .chip{background:var(--tint);color:var(--accent);border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:600;white-space:nowrap}
+  .sp{flex:1}
+  button{font:inherit;border:1px solid var(--line-2);background:#fff;border-radius:6px;padding:7px 14px;cursor:pointer;color:var(--ink);white-space:nowrap}
+  button:hover{border-color:var(--ink-3)}
+  button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.pri:hover{filter:brightness(.88)}
+  button.ghost{border-color:transparent;background:transparent;color:var(--ink-2);padding:4px 8px}
+  button.ghost:hover{background:#efeee9}
+  button:disabled{opacity:.5;cursor:default}
+  nav .sair{margin-top:24px;color:var(--ink-3);font-size:12.5px}
+  .modal li b.warn{color:#b26b00}
+  .seg{display:inline-flex;border:1px solid var(--line-2);border-radius:6px;overflow:hidden}
+  .seg button{border:0;border-radius:0;padding:6px 10px;font-size:12.5px;color:var(--ink-2)}
+  .seg button.on{background:var(--ink);color:#fff}
+
+  main{display:grid;grid-template-columns:190px minmax(0,1fr) minmax(0,40%);min-height:0}
+  main.so-edicao{grid-template-columns:190px minmax(0,1fr)}
+  main.so-previa{grid-template-columns:190px minmax(0,1fr)}
+  nav{background:var(--panel);border-right:1px solid var(--line);padding:14px 10px;overflow:auto}
+  nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);margin:10px 8px 6px}
+  nav a{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;color:var(--ink);text-decoration:none;cursor:pointer;margin-bottom:2px}
+  nav a:hover{background:#f1f0ec}
+  nav a.on{background:var(--tint);color:var(--accent);font-weight:600}
+  nav a .n{font-size:11.5px;color:var(--ink-3);font-weight:400}
+  #editor{overflow:auto;padding:22px 26px 60px}
+  #editor h1{font-size:20px;margin:0 0 4px;font-weight:600}
+  #editor .desc{color:var(--ink-2);margin:0 0 18px;font-size:13px;max-width:720px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:16px}
+  .card h3{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--ink-2);font-weight:500}
+  input,select,textarea{font:inherit;color:var(--ink);border:1px solid var(--line-2);border-radius:5px;padding:6px 8px;background:#fff;width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid #b8d3f4;border-color:var(--accent-2)}
+  textarea{resize:vertical;line-height:1.45}
+  input[type=checkbox]{width:auto}
+  .hint{font-size:12px;color:var(--ink-3);margin-top:4px}
+  .imgbox{display:flex;align-items:center;gap:14px}
+  .imgbox .th{width:180px;height:64px;border:1px dashed var(--line-2);border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fafaf8;color:var(--ink-3);font-size:12px;overflow:hidden}
+  .imgbox .th img{max-width:100%;max-height:100%;object-fit:contain}
+  .imgbox.big .th{width:260px;height:150px}
+
+  .tbl-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
+  table.ed{border-collapse:collapse;width:100%;min-width:720px}
+  table.ed th{position:sticky;top:0;background:#fafaf8;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-2);text-align:left;padding:8px 6px;border-bottom:1px solid var(--line-2);font-weight:600;z-index:1;white-space:nowrap}
+  table.ed td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.ed tr:last-child td{border-bottom:0}
+  table.ed input,table.ed select{border-color:transparent;padding:5px 6px;background:transparent}
+  table.ed input:hover,table.ed select:hover{border-color:var(--line-2)}
+  table.ed input[type=date]{min-width:132px}
+  table.ed select{min-width:82px}
+  table.ed select.stsel{min-width:172px}
+  table.ed input[type=number]{min-width:62px}
+  table.ed td.ro{color:var(--ink-3);font-size:13px;white-space:nowrap;padding-left:10px}
+  table.ed tr.cur td{background:var(--tint)}
+  table.ed select.manual{font-weight:600}
+  .tbl-actions{display:flex;gap:8px;margin-top:10px;align-items:center}
+  .filtros{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .filtros button{border-radius:999px;padding:4px 12px;font-size:12.5px}
+  .filtros button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .auto-list{font-size:13px;color:var(--ink-2);margin:6px 0 0;padding-left:18px}
+
+  #previa{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:#e9e8e4}
+  #previa .bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+  #previa iframe{flex:1;border:0;width:100%;background:#e9e8e4}
+  main.so-edicao #previa{display:none}
+  main.so-previa #editor{display:none}
+
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#1b1b1a;color:#f0efec;padding:10px 16px;border-radius:8px;font-size:13px;display:none;z-index:50;max-width:640px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .modal-bg{position:fixed;inset:0;background:rgba(10,10,10,.35);display:none;align-items:center;justify-content:center;z-index:40}
+  .modal{background:#fff;border-radius:10px;padding:22px 24px;width:520px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+  .modal h2{margin:0 0 6px;font-size:18px}
+  .modal ul{list-style:none;padding:0;margin:14px 0}
+  .modal li{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:baseline}
+  .modal li b{color:var(--good)}
+  .modal code{font-family:Consolas,monospace;font-size:12.5px;background:#f4f3f0;padding:1px 5px;border-radius:3px}
+  .modal .nota{font-size:12px;color:var(--ink-3)}
+  .modal .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  .hist td{font-size:13px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="nome">Report Semanal · Indicadores<small id="salvo">carregando…</small></div>
+    <span class="chip" id="chipSemana"></span>
+    <span class="sp"></span>
+    <div class="seg" id="modo">
+      <button data-m="so-edicao">Edição</button><button data-m="" class="on">Lado a lado</button><button data-m="so-previa">Prévia</button>
+    </div>
+    <button id="btNova" title="Copia a semana atual, avança 7 dias e guarda o % atual como '% semana anterior'">＋ Nova semana</button>
+    <button id="btSalvar">Salvar</button>
+    <button class="pri" id="btGerar">Gerar apresentação</button>
+  </header>
+  <main id="main">
+    <nav id="nav"></nav>
+    <section id="editor"></section>
+    <section id="previa">
+      <div class="bar"><span>Pré-visualização ao vivo</span><span id="nSlides"></span></div>
+      <iframe id="frame" title="Pré-visualização"></iframe>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="render.js"></script>
+<script src="interface.js"></script>
+</body>
+</html>
